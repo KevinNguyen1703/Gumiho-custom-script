@@ -1,0 +1,62 @@
+pipeline {
+    agent any
+
+    stages {
+        stage('Load Subjob Configuration') {
+            steps {
+                script {
+                    // Load the YAML file
+                    def subjobsYaml = readYaml file: 'subjobs.yaml'
+                    subjobs = subjobsYaml.subjobs
+                    echo "Loaded Subjobs: ${subjobs}"
+                }
+            }
+        }
+
+        stage('Run Subjobs') {
+            steps {
+                script {
+                    def builds = [:]
+
+                    for (int i = 0; i < subjobs.size(); i++) {
+                        def subjob = subjobs[i]
+                        def jobName = subjob.name
+                        def params = subjob.parameters
+
+                        // Convert the parameters map to Jenkins build parameters
+                        def buildParams = params.collect { key, value ->
+                            if (value instanceof Boolean) {
+                                booleanParam(name: key, value: value)
+                            } else if (value instanceof Integer) {
+                                string(name: key, value: value.toString())
+                            } else {
+                                string(name: key, value: value)
+                            }
+                        }
+
+                        // Define the closure for each subjob
+                        builds["Run ${jobName}"] = {
+                            try {
+                                echo "Starting ${jobName} with parameters: ${params}"
+                                build job: jobName, wait: true, parameters: buildParams
+                                echo "${jobName} completed successfully."
+                            } catch (Exception e) {
+                                echo "${jobName} failed: ${e.getMessage()}"
+                                currentBuild.result = 'FAILURE'
+                            }
+                        }
+                    }
+
+                    // Run all the subjobs in parallel
+                    parallel builds
+                }
+            }
+        }
+    }
+
+    post {
+        always {
+            echo 'Pipeline Execution Complete.'
+        }
+    }
+}
