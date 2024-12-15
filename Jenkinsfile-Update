@@ -1,0 +1,67 @@
+pipeline {
+    agent any
+
+    environment {
+        AWS_REGION = 'us-east-1'             // Replace with your AWS region
+        ASG_NAME = 'my-auto-scaling-group'   // Replace with your Auto Scaling Group name
+        DESIRED_COUNT = '2'                  // Replace with the desired instance count
+    }
+
+    stages {
+        stage('Trigger Shakeout Pipeline') {
+            steps {
+                script {
+                    echo 'Triggering the shakeout pipeline...'
+                    build job: 'shakeout-pipeline', wait: true
+                    echo 'Shakeout pipeline completed successfully.'
+                }
+            }
+        }
+
+        stage('Enable Prepare for Shutdown Mode') {
+            steps {
+                script {
+                    echo 'Enabling Prepare for Shutdown mode...'
+                    sh '''
+                    curl -X POST -u ${JENKINS_USER}:${JENKINS_API_TOKEN} \
+                    "${JENKINS_URL}/safe-shutdown"
+                    '''
+                    echo 'Jenkins is now in Prepare for Shutdown mode.'
+                }
+            }
+        }
+
+        stage('Ensure Only This Job is Running') {
+            steps {
+                script {
+                    def runningBuilds = jenkins.model.Jenkins.instance.getQueue().getItems()
+                    if (runningBuilds.size() > 0) {
+                        error "There are other jobs running. Aborting execution."
+                    }
+                    echo 'No other jobs are running.'
+                }
+            }
+        }
+
+        stage('Update AWS ASG Desired Instance Count') {
+            steps {
+                script {
+                    echo "Updating Auto Scaling Group ${ASG_NAME} to desired instance count: ${DESIRED_COUNT}"
+                    sh """
+                    aws autoscaling update-auto-scaling-group \
+                    --auto-scaling-group-name ${ASG_NAME} \
+                    --desired-capacity ${DESIRED_COUNT} \
+                    --region ${AWS_REGION}
+                    """
+                    echo 'ASG desired instance count updated successfully.'
+                }
+            }
+        }
+    }
+
+    post {
+        always {
+            echo 'Pipeline execution complete.'
+        }
+    }
+}
